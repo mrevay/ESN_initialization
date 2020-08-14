@@ -227,21 +227,14 @@ class echo_state_network:
         if sample:
             samples = 1000
             xtild = 2 * np.random.randn(self.n, samples)
-            xtild_next = Bss @ self.phi(xtild)
+            xtild_next = Bss @ self.phi(xtild + self.bias)
         else:
             # Target distribution of eigenvalues.
             xtild = np.eye(self.n)
-            xtild_next = Bss @ self.phi(xtild)
+            xtild_next = Bss @ self.phi(xtild + self.bias)
 
         # Construct LREE
-        Phi = np.zeros((2*self.n+self.q, 2*self.n+self.q))
-        for ii in range(xtild.shape[1]):
-
-            # Construct data
-            wtild = self.phi(xtild[:, ii:ii+1])
-            zt = np.concatenate([xtild_next[:, ii:ii+1], xtild[:, ii:ii+1], wtild], 0)
-
-            Phi = Phi + zt @ zt.T
+        wtild = self.phi(xtild + self.bias)
 
         R = cvx.Variable((2*self.n + self.q, 2*self.n + self.q))
 
@@ -325,46 +318,27 @@ class echo_state_network:
         u = data["u"]
         y = data["y"]
 
+        p = y.shape[1]
+        m = u.shape[1]
+
+        batches = u.shape[2]
+        T = u.shape[0]
+
         #Simulate ESN dynamics on training data
-        X = np.zeros((self.n, y.shape[1]))
-        for t in range(1, y.shape[1]):
-            vt = self.Cv @ X[:, t-1:t] + self.Du @ u[:, t:t+1] + self.bias
+        X = np.zeros((T, self.n, batches))
+        for t in range(1, T):
+            vt = self.Cv @ X[t-1:t, :, :] + self.Du @ u[t:t+1, :, :] + self.bias
             wt = self.phi(vt)
 
             if self.ofb:
-                X[:, t:t+1] = self.A @ X[:, t-1:t] + self.Bw @ wt + \
-                              self.Bu @ u[:, t:t+1] + self.Wofb @ y[:, t-1:t]
+                X[t:t+1, :, :] = self.A @ X[t-1:t, :, :] + self.Bw @ wt + \
+                              self.Bu @ u[t:t+1, :, :] + self.Wofb @ y[t-1:t, :, :]
             else:
-                X[:, t:t+1] = self.A @ X[:, t-1:t] + self.Bw @ wt + self.Bu @ u[:, t:t+1]
+                X[t:t+1, :, :] = self.A @ X[t-1:t, :, :] + self.Bw @ wt + self.Bu @ u[t:t+1, :, :]
 
-        Ytilde = y[:, self.washout:]
-        Xtilde = X[:, self.washout:]
+        Ytilde = Ytilde = y[self.washout:, :, :].transpose([1, 2 , 0]).reshape((p, -1))
+        Xtilde = X[self.washout:, :, :].transpose([1, 2 , 0]).reshape((n, -1))
         self.Cy = Ytilde @ np.linalg.pinv(Xtilde)
-
-    def train_stable(self, data):
-
-        u = data["u"]
-        y = data["y"]
-
-        #Simulate ESN dynamics on training data
-        X = np.zeros((self.n, y.shape[1]))
-        for t in range(1, y.shape[1]):
-            vt = self.Cv @ X[:, t-1:t] + self.Du @ u[:, t:t+1] + self.bias
-            wt = self.phi(vt)
-
-            if self.ofb:
-                X[:, t:t+1] = self.A @ X[:, t-1:t] + self.Bw @ wt + \
-                              self.Bu @ u[:, t:t+1] + self.Wofb @ y[:, t-1:t]
-            else:
-                X[:, t:t+1] = self.A @ X[:, t-1:t] + self.Bw @ wt + self.Bu @ u[:, t:t+1]
-
-        Ytilde = y[:, self.washout:]
-        Xtilde = X[:, self.washout:]
-
-        multis = cvx.Variable(self.q, 1)
-        Cy = cvx.Variable(self.p, self.n)
-        J = cvx.norm(Ytilde - Cy @ Xtilde) ** 2
-
 
 
     def test(self, data):
@@ -372,31 +346,40 @@ class echo_state_network:
         u = data["u"]
         y = data["y"]
 
+        p = y.shape[1]
+        m = u.shape[1]
+
+        batches = u.shape[2]
+        T = u.shape[0]
+
         #Simulate ESN dynamics on training data
-        X = np.zeros((self.n, y.shape[1]))
-        for t in range(1, y.shape[1]):
-            vt = self.Cv @ X[:, t-1:t] + self.Du @ u[:, t:t+1] + self.bias
+        X = np.zeros((T, self.n, batches))
+        for t in range(1, T):
+            vt = self.Cv @ X[t-1:t, :, :] + self.Du @ u[t:t+1, :, :] + self.bias
             wt = self.phi(vt)
+
             if self.ofb:
-                if t < self.washout:
-                    X[:, t:t+1] = self.A @ X[:, t-1:t] + self.Bw @ wt + \
-                                  self.Bu @ u[:, t:t+1] + self.Wofb @ y[:, t-1:t]
-                else:
-                    X[:, t:t+1] = (self.Wofb @ self.Cy + self.A) @ X[:, t-1:t] +\
-                                   self.Bw @ wt + self.Bu @ u[:, t:t+1]
-
+                X[t:t+1, :, :] = self.A @ X[t-1:t, :, :] + self.Bw @ wt + \
+                              self.Bu @ u[t:t+1, :, :] + self.Wofb @ y[t-1:t, :, :]
             else:
-                X[:, t:t+1] = self.A @ X[:, t-1:t] + self.Bw @ wt + self.Bu @ u[:, t:t+1]
+                X[t:t+1, :, :] = self.A @ X[t-1:t, :, :] + self.Bw @ wt + self.Bu @ u[t:t+1, :, :]
 
-        Ytilde = y[:, self.washout:]
-        Xtilde = X[:, self.washout:]
+        # Calcualte outputs of model
+        Ytilde = y[self.washout:, :, :].transpose([1, 2 , 0]).reshape((p, -1))
+        Xtilde = X[self.washout:, : , :].transpose([1, 2 , 0]).reshape((n, -1))
 
         Yhat = self.Cy @ Xtilde
 
-        perf = {}
-        perf["NRMSE"] = np.linalg.norm(Ytilde - Yhat) / np.linalg.norm(Ytilde)
+        # reshape back into batches
+        Yhat = Yhat.reshape(p, batches, -1)
+        Ytilde = Ytilde.reshape(p, batches, -1)
 
-        return np.linalg.norm(Ytilde - Yhat) / np.linalg.norm(Ytilde)
+        rmse = np.sqrt(np.mean((Yhat - Ytilde) ** 2, 2))
+        nrmse = np.sqrt(np.mean((Yhat - Ytilde) ** 2, 2)) / np.sqrt(np.mean((Ytilde) ** 2, 2))
+
+        perf = {"rmse": rmse, "nrmse": nrmse}
+
+        return perf
 
 
 if __name__ == "__main__":
@@ -410,7 +393,7 @@ if __name__ == "__main__":
         # return x   # Linear
 
     # [train, val, test] = loader.load_data(dataset='WH')
-    [train, val, test] = loader.load_data(dataset='Silverbox')
+    [train, val, test] = loader.load_data(dataset='F16_random_grid')
 
     if param_search:
         def train_and_val(hyperparameters):
@@ -445,21 +428,48 @@ if __name__ == "__main__":
         best = fmin(fn=train_and_val, space=param_space, algo=tpe.suggest, 
                     max_evals=MAX_EVALS, trials=bayes_trials)
 
-    n = 100
-    q = 100
+    n = 200
+    q = 200
+    m = 1
+    p = 1
 
     radius = 1.0
     bias_var = 1.0
     Du_var = 1.0
     Bu_var = 1.0
+
     ESN = echo_state_network(n, 1, 1, q, 1.0, radius, phi, 200,
                              bias_var=bias_var, Du_var=Du_var,
                              Bu_var=Bu_var, ofb=False, gamma=0)
 
+    # Make A matrix
+    N = n // 2
+
+    A11 = np.random.randn(N, N) / np.sqrt(N)
+    sr = np.max(np.abs(np.linalg.eigvals(A11)))
+    A11 = A11 / sr * radius
+
+    A12 = np.zeros((N, N))
+    A22 = np.zeros((N, N))
+
+    ESN.A = sp.block([[A11, A12], [A12, A22]])
+
+
+    Bw11 = np.zeros((N, N))
+    Bw21 = np.random.randn(N, N)
+    Bw12 = -Bw21.T
+    Bw22 = np.random.randn(N, N) / np.sqrt(N) * 0.95
+    ESN.Bw = sp.block([[Bw11, Bw12], [Bw21, Bw22]])
+
+    ESN.bias = np.random.randn(n, 1)
+
+    ESN.Bu = 0.5 * np.random.randn(n, m)
+    ESN.Cv = np.eye(n)
+    ESN.Du = np.zeros((n, m))
 
     # Initialize the reservoir
     # ESN.ESN_init_IEE(diag_E=False, diag_P=False)
-    ESN.ESN_init_LREE(diag_E=False, diag_P=True, sample=True, F_is_zero=True)
+    # ESN.ESN_init_LREE(diag_E=False, diag_P=False, sample=True, F_is_zero=True)
 
     # ESN.init_lin_driver()
     # ESN.ESN_init_sr()

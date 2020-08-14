@@ -197,8 +197,37 @@ def load_data(dataset="Silverbox"):
 
         return train, val, test
 
+    elif dataset == "F16_random_grid":
+        f16_dir = './datasets/F16GVT_Files/BenchmarkData'
+        train_dat = io.loadmat(f16_dir + '/F16Data_SpecialOddMSine_Level2.mat')
+        test_dat = io.loadmat(f16_dir + '/F16Data_SpecialOddMSine_Level2_Validation.mat')
+
+        # Test data
+        u_test = test_dat["Force"][:, :, None]
+        u_test = u_test.transpose([1, 0, 2])
+
+        y_test = test_dat["Acceleration"]
+        y_test = y_test.transpose([2, 0, 1])
+
+        # Training data
+        u_train = train_dat["Force"][:, None, :]
+        u_train = u_train.transpose([2, 1, 0])
+
+        y_train = train_dat["Acceleration"]
+        y_train = y_train.transpose([2, 0, 1])
+
+        # Validation
+        u_val = u_train[:, :, -1:]
+        y_val = y_train[:, :, -1:]
+
+        train = {"u": u_train, "y": y_train}
+        test = {"u": u_test, "y": y_test}
+        val = {"u": u_val, "y": y_val}
+
+        return train, val, test
+
 if __name__ == "__main__":
 
-    train, val, test = load_data(dataset="F16")
+    train, val, test = load_data(dataset="F16_random_grid")
 
     print('~fin~')
