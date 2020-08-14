@@ -336,7 +336,7 @@ class echo_state_network:
             else:
                 X[t:t+1, :, :] = self.A @ X[t-1:t, :, :] + self.Bw @ wt + self.Bu @ u[t:t+1, :, :]
 
-        Ytilde = Ytilde = y[self.washout:, :, :].transpose([1, 2 , 0]).reshape((p, -1))
+        Ytilde = y[self.washout:, :, :].transpose([1, 2 , 0]).reshape((p, -1))
         Xtilde = X[self.washout:, :, :].transpose([1, 2 , 0]).reshape((n, -1))
         self.Cy = Ytilde @ np.linalg.pinv(Xtilde)
 
@@ -359,8 +359,12 @@ class echo_state_network:
             wt = self.phi(vt)
 
             if self.ofb:
-                X[t:t+1, :, :] = self.A @ X[t-1:t, :, :] + self.Bw @ wt + \
-                              self.Bu @ u[t:t+1, :, :] + self.Wofb @ y[t-1:t, :, :]
+                if t < self.washout:
+                    X[t:t+1, :, :] = self.A @ X[t-1:t, :, :] + self.Bw @ wt + \
+                                self.Bu @ u[t:t+1, :, :] + self.Wofb @ y[t-1:t, :, :]
+                else:
+                    X[t:t+1, :, :] = (self.A + self.Wofb @ self.Cy)@ X[t-1:t, :, :] + self.Bw @ wt + \
+                                self.Bu @ u[t:t+1, :, :]
             else:
                 X[t:t+1, :, :] = self.A @ X[t-1:t, :, :] + self.Bw @ wt + self.Bu @ u[t:t+1, :, :]
 
@@ -428,19 +432,19 @@ if __name__ == "__main__":
         best = fmin(fn=train_and_val, space=param_space, algo=tpe.suggest, 
                     max_evals=MAX_EVALS, trials=bayes_trials)
 
-    n = 200
-    q = 200
+    n = 500
+    q = 500
     m = 1
-    p = 1
+    p = 3
 
-    radius = 1.0
+    radius = 0.95
     bias_var = 1.0
     Du_var = 1.0
     Bu_var = 1.0
 
     ESN = echo_state_network(n, 1, 1, q, 1.0, radius, phi, 200,
                              bias_var=bias_var, Du_var=Du_var,
-                             Bu_var=Bu_var, ofb=False, gamma=0)
+                             Bu_var=Bu_var, ofb=True, gamma=0)
 
     # Make A matrix
     N = n // 2
@@ -451,21 +455,22 @@ if __name__ == "__main__":
 
     A12 = np.zeros((N, N))
     A22 = np.zeros((N, N))
-
-    ESN.A = sp.block([[A11, A12], [A12, A22]])
-
+    A21 = np.random.randn(N, N)
+    ESN.A = sp.block([[A11, A22], [A12, A22]])
 
     Bw11 = np.zeros((N, N))
-    Bw21 = np.random.randn(N, N)
-    Bw12 = -Bw21.T
-    Bw22 = np.random.randn(N, N) / np.sqrt(N) * 0.95
+    Bw21 = np.random.randn(N, N) / np.sqrt(N)
+    Bw12 = -0*Bw21.T
+    Bw22 = np.random.randn(N, N) / np.sqrt(N) * radius
     ESN.Bw = sp.block([[Bw11, Bw12], [Bw21, Bw22]])
 
     ESN.bias = np.random.randn(n, 1)
 
-    ESN.Bu = 0.5 * np.random.randn(n, m)
+    ESN.Bu = 1.0 * np.random.randn(n, m)
     ESN.Cv = np.eye(n)
     ESN.Du = np.zeros((n, m))
+
+    ESN.Wofb = np.random.randn(n, p)
 
     # Initialize the reservoir
     # ESN.ESN_init_IEE(diag_E=False, diag_P=False)
@@ -480,13 +485,13 @@ if __name__ == "__main__":
     val_perf = ESN.test(val)
     test_perf = ESN.test(test)
 
-    if test_perf > 1:
-        test_perf = ESN.test(test)
-        print("unstable system?")
+    # if test_perf["rmse"] > 1:
+    #     test_perf = ESN.test(test)
+    #     print("unstable system?")
 
-    print("training performance: ", train_perf)
-    print("val performance: ", val_perf)
-    print("test performance: ", test_perf)
+    print("training performance: ", np.mean(train_perf["rmse"]))
+    print("val performance: ", np.mean(val_perf["rmse"]))
+    print("test performance: ", np.mean(test_perf["rmse"]))
 
     eigs = np.linalg.eigvals(ESN.Bw)
     plt.plot(np.real(eigs), np.imag(eigs), '.')
